@@ -344,6 +344,34 @@ async function findRoute(){
 }
 $('who').onchange = () => { if(pts.length === 2) findRoute(); };
 
+/* ---------- 10. find my location and search any place ---------- */
+let meMarker = null;
+map.on('locationfound', e => {
+  if(meMarker) map.removeLayer(meMarker);
+  meMarker = L.circleMarker(e.latlng, {radius:8, color:'#fff', weight:3, fillColor:'#1a73e8', fillOpacity:1, bubblingMouseEvents:false}).bindTooltip('You are here').addTo(map);
+});
+map.on('locationerror', () => toast('Could not get your location. Allow location access in your browser (lock icon next to the web address), or search for a place.'));
+const locate = () => map.locate({setView:true, maxZoom:16, enableHighAccuracy:true});
+const finder = L.control({position:'topleft'});
+finder.onAdd = () => {
+  const d = L.DomUtil.create('div', 'live');
+  d.innerHTML = '<button type="button" id="me" class="ghost" style="width:100%">Find my location</button><form id="find" style="margin-top:6px"><input id="q" placeholder="Search any place or city" style="width:100%;padding:6px"><button class="ghost" style="width:100%;margin-top:4px">Search</button></form>';
+  L.DomEvent.disableClickPropagation(d);
+  return d;
+};
+finder.addTo(map);
+$('me').onclick = locate;
+$('find').onsubmit = async e => {
+  e.preventDefault();
+  const q = $('q').value.trim(); if(!q) return;
+  try{
+    const res = await (await fetch('https://nominatim.openstreetmap.org/search?format=json&limit=1&q=' + encodeURIComponent(q))).json();
+    if(!res.length) return toast('Place not found. Try a more specific name.');
+    map.flyTo([+res[0].lat, +res[0].lon], 15);
+  }catch(err){ toast('Search failed. Check your internet and try again.'); }
+};
+locate();   // ask for the visitor's location as soon as the page opens
+
 render();
 </script>
 </body>
