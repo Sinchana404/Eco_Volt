@@ -10,6 +10,7 @@
 /* ---------- look and feel (change colours here) ---------- */
 :root{--acc:#f2b705;--ink:#1d2430;--accInk:#1d2430;--bg:#f3f5f7}
 body[data-mode=emerg]{--acc:#1f6fd1;--accInk:#fff}
+body[data-mode=route]{--acc:#23813d;--accInk:#fff}
 *{box-sizing:border-box}
 body{margin:0;height:100vh;display:flex;font-family:Barlow,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
 #panel{width:380px;overflow:auto;display:flex;flex-direction:column}
@@ -19,7 +20,7 @@ header h1{margin:0;font-size:26px}
 header p{margin:2px 0 0}
 .lane{height:4px;background:repeating-linear-gradient(90deg,var(--accInk) 0 18px,transparent 18px 32px)}
 .tabs{display:flex;gap:6px;padding:12px 18px 0}
-.tabs button{flex:1;padding:9px;border:2px solid var(--ink);background:#fff;font-weight:600;border-radius:6px}
+.tabs button{flex:1;padding:9px 4px;font-size:14px;border:2px solid var(--ink);background:#fff;font-weight:600;border-radius:6px}
 .tabs button.on{background:var(--ink);color:#fff}
 section{padding:14px 18px}
 label{display:block;font-weight:600;margin:10px 0 4px}
@@ -42,6 +43,10 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px sol
 footer{margin-top:auto;padding:12px 18px;font-size:12px;color:#52606d}
 footer button{border:0;background:none;text-decoration:underline;padding:0;color:inherit}
 #toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:6px;display:none;z-index:999;max-width:90%}
+.live{background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,.3);font-size:13px;width:210px;font-family:Barlow,system-ui,sans-serif}
+.lt{display:block;font-size:15px;margin-bottom:6px}
+.lr{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
+.live small{display:block;color:#52606d;margin-top:6px}
 @media(max-width:760px){body{flex-direction:column;height:auto;min-height:100vh}#map{order:-1;flex:none;height:45vh}#panel{width:auto}}
 </style>
 </head>
@@ -52,6 +57,7 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
   <div class="tabs">
     <button id="tPublic" class="on">Citizen app</button>
     <button id="tEmerg">Emergency desk</button>
+    <button id="tRoute">Route planner</button>
   </div>
 
   <!-- CITIZEN VIEW: anyone can report and confirm hazards -->
@@ -76,6 +82,15 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
     <button class="pri" id="csv">Export data as CSV (organisation plan)</button>
   </section>
 
+  <!-- ROUTE PLANNER: delivery companies and women travelling alone -->
+  <section id="vRoute" hidden>
+    <label for="who">Who is travelling?</label>
+    <select id="who"><option value="rider">Delivery rider (fast and safe)</option><option value="woman">Woman travelling alone (avoid unsafe areas)</option></select>
+    <p id="routeHint">Tap the map to set the pickup point, then tap the drop point.</p>
+    <div id="routeOut"></div>
+    <small>Green is the recommended route, blue dashed is the fastest on paper, grey are other options. Purple circles on the map are safety reports.</small>
+  </section>
+
   <footer>Sample data for demo, saved in this browser only. <button id="reset">Reset demo data</button></footer>
 </aside>
 <div id="map"></div>
@@ -86,7 +101,10 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
 /* ---------- 1. settings and sample data ---------- */
 const KEY = 'ecovolt-demo-v1';
 const CITY = [12.9716, 77.5946];            // map centre: Bengaluru
-const TYPES = {pothole:'Pothole', water:'Waterlogging', accident:'Accident', signal:'Signal not working', tree:'Fallen tree'};
+const TYPES = {pothole:'Pothole', water:'Waterlogging', accident:'Accident', signal:'Signal not working', tree:'Fallen tree', robbery:'Robbery or theft', dark:'Poorly lit road', harass:'Harassment'};
+const SAFETY = {robbery:1, dark:1, harass:1};   // these types are safety reports, drawn in purple
+// Route scoring: seconds of penalty added per reported problem near a route, multiplied by severity
+const PROFILES = {rider:{road:90, safe:60}, woman:{road:30, safe:400}};
 const SEV = {1:['Low','#e0a100'], 2:['High','#e8590c'], 3:['Critical','#c92a2a']};
 const hrs = n => Date.now() - n * 36e5;
 const SEED = [
@@ -97,7 +115,10 @@ const SEED = [
   {id:5, type:'accident',sev:3, note:'Two-wheeler skid, one lane blocked',           lat:13.0012, lng:77.6960, time:hrs(0.5), confirms:2},
   {id:6, type:'tree',    sev:2, note:'Branch across the road',                       lat:13.0035, lng:77.5643, time:hrs(3), confirms:3},
   {id:7, type:'pothole', sev:2, note:'Road edge broken for 20 metres',               lat:12.9308, lng:77.5838, time:hrs(30), confirms:2},
-  {id:8, type:'water',   sev:1, note:'Puddle forming near the service road',         lat:12.8452, lng:77.6602, time:hrs(4), confirms:1}
+  {id:8, type:'water',   sev:1, note:'Puddle forming near the service road',         lat:12.8452, lng:77.6602, time:hrs(4), confirms:1},
+  {id:9,  type:'robbery', sev:3, note:'Phone snatching reported after dark',          lat:12.9660, lng:77.5880, time:hrs(6),  confirms:4},
+  {id:10, type:'dark',    sev:2, note:'Street lights out along the whole stretch',    lat:12.9560, lng:77.6030, time:hrs(12), confirms:3},
+  {id:11, type:'harass',  sev:3, note:'Women reported being followed near the bus stop', lat:12.9930, lng:77.6200, time:hrs(8), confirms:3}
 ];
 const mk = r => Object.assign({fixed:0, dispatched:false, resolved:false}, r);
 
@@ -116,17 +137,18 @@ const markers = {};
 const map = L.map('map').setView(CITY, 12);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
 const layer = L.layerGroup().addTo(map);
-$('type').innerHTML = Object.entries(TYPES).map(([k,v]) => `<option value="${k}">${v}</option>`).join('');
+const opt = k => `<option value="${k}">${TYPES[k]}</option>`;
+$('type').innerHTML = '<optgroup label="Road hazards">' + Object.keys(TYPES).filter(k => !SAFETY[k]).map(opt).join('') + '</optgroup><optgroup label="Safety concerns">' + Object.keys(SAFETY).map(opt).join('') + '</optgroup>';
 
 /* ---------- 4. drawing everything ---------- */
 function visible(){
   // Citizens see every open report. The emergency desk only sees verified or critical ones.
-  return reports.filter(r => !r.resolved && (mode==='public' || verified(r) || r.sev===3))
+  return reports.filter(r => !r.resolved && (mode!=='emerg' || verified(r) || r.sev===3))
                 .sort((a,b) => b.sev - a.sev || b.time - a.time);
 }
 function popup(r){
   const status = verified(r) ? 'Verified by '+r.confirms+' people' : 'Unverified: '+r.confirms+' of 3 confirmations';
-  const btns = mode==='public'
+  const btns = mode!=='emerg'
     ? `<button onclick="act(${r.id},'confirm')">I see it too</button><button onclick="act(${r.id},'fixed')">It's fixed</button>`
     : `<button onclick="act(${r.id},'dispatch')">${r.dispatched?'Crew on the way':'Dispatch crew'}</button><button onclick="act(${r.id},'resolve')">Mark resolved</button>`;
   return `<b>${TYPES[r.type]}</b> (${SEV[r.sev][0]})<br>${esc(r.note) || 'No details'}<br><small>${status}<br>Reported ${ago(r.time)}</small><div class="pb">${btns}</div>`;
@@ -134,8 +156,9 @@ function popup(r){
 function render(){
   layer.clearLayers();
   const list = visible();
+  renderStats();
   list.forEach(r => {
-    markers[r.id] = L.circleMarker([r.lat, r.lng], {radius:8+r.sev*2, color:'#fff', weight:2, fillColor:SEV[r.sev][1], fillOpacity:r.dispatched?0.45:0.95})
+    markers[r.id] = L.circleMarker([r.lat, r.lng], {radius:8+r.sev*2, color:'#fff', weight:2, fillColor:SAFETY[r.type]?'#7b2cbf':SEV[r.sev][1], fillOpacity:r.dispatched?0.45:0.95})
       .bindPopup(popup(r)).addTo(layer);
   });
   if(mode==='emerg'){
@@ -156,8 +179,8 @@ function act(id, kind){
 }
 function setMode(m){
   mode = m; document.body.dataset.mode = m;
-  $('vPublic').hidden = m!=='public'; $('vEmerg').hidden = m!=='emerg';
-  $('tPublic').classList.toggle('on', m==='public'); $('tEmerg').classList.toggle('on', m==='emerg');
+  $('vPublic').hidden = m!=='public'; $('vEmerg').hidden = m!=='emerg'; $('vRoute').hidden = m!=='route';
+  $('tPublic').classList.toggle('on', m==='public'); $('tEmerg').classList.toggle('on', m==='emerg'); $('tRoute').classList.toggle('on', m==='route');
   map.closePopup(); render();
 }
 function setDraft(lat, lng){
@@ -171,7 +194,8 @@ function setDraft(lat, lng){
 /* ---------- 6. wiring up buttons ---------- */
 $('tPublic').onclick = () => setMode('public');
 $('tEmerg').onclick = () => setMode('emerg');
-map.on('click', e => { if(mode==='public') setDraft(e.latlng.lat, e.latlng.lng); });
+$('tRoute').onclick = () => setMode('route');
+map.on('click', e => { if(mode==='public') setDraft(e.latlng.lat, e.latlng.lng); if(mode==='route') routeClick(e.latlng); });
 $('loc').onclick = () => {
   if(!navigator.geolocation) return toast('Location is not available. Tap the map instead.');
   navigator.geolocation.getCurrentPosition(
@@ -194,6 +218,73 @@ $('csv').onclick = () => {
   a.download = 'ecovolt-hazards.csv'; a.click();
 };
 $('reset').onclick = () => {reports = SEED.map(mk); save(); render(); toast('Demo data reset.');};
+
+/* ---------- 7. live numbers card (shown on the map in every tab) ---------- */
+let lastTrip = null;
+const info = L.control({position:'topright'});
+info.onAdd = () => { const d = L.DomUtil.create('div', 'live'); d.id = 'live'; L.DomEvent.disableClickPropagation(d); return d; };
+info.addTo(map);
+function renderStats(){
+  const open = reports.filter(r => !r.resolved);
+  const ver = open.filter(r => verified(r)).length;
+  const row = (label, val) => `<div class="lr"><span>${label}</span><b>${val}</b></div>`;
+  let trip = 'plan one in Route planner';
+  if(lastTrip) trip = lastTrip.avoided + ' reported problems avoided' + (lastTrip.who === 'rider' ? ', about ' + lastTrip.mins.toFixed(1) + ' min of delay saved*' : '');
+  $('live').innerHTML = '<b class="lt">Live numbers</b>'
+    + row('Open reports', open.length)
+    + row('Verified by community', open.length ? Math.round(100 * ver / open.length) + '%' : '0%')
+    + row('Safety reports', open.filter(r => SAFETY[r.type]).length)
+    + row('Crews dispatched', reports.filter(r => r.dispatched).length)
+    + row('Fixed or resolved', reports.filter(r => r.resolved).length)
+    + `<small>Last trip: ${trip}</small><small>*Estimate from the delay weights in PROFILES. These are assumptions, so replace them with your survey data.</small>`;
+}
+
+/* ---------- 8. route planner ---------- */
+let pts = [];
+const routeLayer = L.layerGroup().addTo(map);
+function routeClick(ll){
+  if(pts.length >= 2){pts = []; routeLayer.clearLayers(); $('routeOut').innerHTML = '';}
+  pts.push(ll);
+  const first = pts.length === 1;
+  L.circleMarker(ll, {radius:9, color:'#1d2430', weight:3, fillColor:first?'#23813d':'#1d2430', fillOpacity:1})
+    .bindTooltip(first?'Pickup':'Drop', {permanent:true, direction:'top'}).addTo(routeLayer);
+  if(first) $('routeHint').textContent = 'Now tap the drop point.'; else findRoute();
+}
+async function findRoute(){
+  const [a, b] = pts;
+  $('routeHint').textContent = 'Finding routes...';
+  try{
+    // free public routing service (OSRM demo server), fine for a prototype
+    const url = `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson&alternatives=true`;
+    const d = await (await fetch(url)).json();
+    if(!d.routes || !d.routes.length) throw new Error('no route');
+    const W = PROFILES[$('who').value];
+    const opts = d.routes.map(r => {
+      const line = r.geometry.coordinates.map(c => [c[1], c[0]]);
+      // a report counts if it is within about 100 m of the route
+      const hits = reports.filter(h => !h.resolved && line.some(p => map.distance(p, [h.lat, h.lng]) < 100));
+      const penalty = hits.reduce((sum, h) => sum + h.sev * (SAFETY[h.type] ? W.safe : W.road), 0);
+      return {line, min:r.duration/60, km:r.distance/1000, hits, score:r.duration + penalty};
+    });
+    const fast = opts.reduce((x, y) => y.min < x.min ? y : x);
+    const best = opts.reduce((x, y) => y.score < x.score ? y : x);
+    routeLayer.clearLayers();
+    opts.forEach(o => L.polyline(o.line, {color:'#9aa5b1', weight:4, opacity:0.7}).addTo(routeLayer));
+    if(fast !== best) L.polyline(fast.line, {color:'#1f6fd1', weight:5, dashArray:'8 8'}).addTo(routeLayer);
+    const bl = L.polyline(best.line, {color:'#23813d', weight:7}).addTo(routeLayer);
+    pts.forEach((p, i) => L.circleMarker(p, {radius:9, color:'#1d2430', weight:3, fillColor:i?'#1d2430':'#23813d', fillOpacity:1}).bindTooltip(i?'Drop':'Pickup', {permanent:true, direction:'top'}).addTo(routeLayer));
+    map.fitBounds(bl.getBounds(), {padding:[40, 40]});
+    lastTrip = {avoided:Math.max(0, fast.hits.length - best.hits.length), mins:Math.max(0, (fast.score - best.score)/60), who:$('who').value};
+    renderStats();
+    const row = (title, color, o) => `<p><b style="color:${color}">${title}</b><br>${Math.round(o.min)} min, ${o.km.toFixed(1)} km<br><small>${o.hits.length ? o.hits.length+' reported on the way: '+[...new Set(o.hits.map(h => TYPES[h.type]))].join(', ') : 'No reported problems on this route'}</small></p>`;
+    $('routeOut').innerHTML = (fast !== best ? row('Fastest on paper', '#1f6fd1', fast) : '') + row(fast === best ? 'Best route' : 'Recommended', '#23813d', best);
+    $('routeHint').textContent = 'Tap the map again to plan a new trip.';
+  }catch(e){
+    $('routeHint').textContent = 'Could not get routes. Check your internet and tap the pickup point again.';
+    pts = [];
+  }
+}
+$('who').onchange = () => { if(pts.length === 2) findRoute(); };
 
 render();
 </script>
