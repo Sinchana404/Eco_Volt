@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EcoVolt prototype</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+/* ---------- look and feel (change colours here) ---------- */
+:root{--acc:#f2b705;--ink:#1d2430;--accInk:#1d2430;--bg:#f3f5f7}
+body[data-mode=emerg]{--acc:#1f6fd1;--accInk:#fff}
+*{box-sizing:border-box}
+body{margin:0;height:100vh;display:flex;font-family:Barlow,system-ui,sans-serif;color:var(--ink);background:var(--bg)}
+#panel{width:380px;overflow:auto;display:flex;flex-direction:column}
+#map{flex:1}
+header{background:var(--acc);color:var(--accInk);padding:16px 18px 12px}
+header h1{margin:0;font-size:26px}
+header p{margin:2px 0 0}
+.lane{height:4px;background:repeating-linear-gradient(90deg,var(--accInk) 0 18px,transparent 18px 32px)}
+.tabs{display:flex;gap:6px;padding:12px 18px 0}
+.tabs button{flex:1;padding:9px;border:2px solid var(--ink);background:#fff;font-weight:600;border-radius:6px}
+.tabs button.on{background:var(--ink);color:#fff}
+section{padding:14px 18px}
+label{display:block;font-weight:600;margin:10px 0 4px}
+select,textarea{width:100%;padding:8px;font:inherit;border:1px solid #9aa5b1;border-radius:6px}
+button{font:inherit;cursor:pointer}
+button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.pri{width:100%;margin-top:12px;padding:11px;border:0;border-radius:6px;background:var(--ink);color:#fff;font-weight:700}
+.pri:disabled{opacity:.4;cursor:not-allowed}
+.ghost{padding:7px 10px;border:1px solid var(--ink);background:#fff;border-radius:6px}
+#pin{margin:8px 0 0;font-size:14px}
+#stats{display:flex;gap:8px;margin-bottom:12px}
+#stats div{flex:1;background:#fff;border-radius:6px;padding:8px;text-align:center;font-size:13px}
+#stats b{display:block;font-size:24px}
+#desk{list-style:none;margin:0;padding:0}
+#desk li{display:flex;gap:10px;padding:10px;margin-bottom:6px;background:#fff;border-radius:6px;cursor:pointer}
+#desk i{width:6px;border-radius:3px;flex:none}
+#desk small{color:#52606d}
+.pb{display:flex;gap:6px;margin-top:8px}
+.pb button{padding:5px 8px;border:1px solid var(--ink);background:#fff;border-radius:5px}
+footer{margin-top:auto;padding:12px 18px;font-size:12px;color:#52606d}
+footer button{border:0;background:none;text-decoration:underline;padding:0;color:inherit}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:6px;display:none;z-index:999;max-width:90%}
+@media(max-width:760px){body{flex-direction:column;height:auto;min-height:100vh}#map{order:-1;flex:none;height:45vh}#panel{width:auto}}
+</style>
+</head>
+<body data-mode="public">
+<aside id="panel">
+  <header><h1>EcoVolt</h1><p>Live road hazard alerts for Bengaluru</p></header>
+  <div class="lane"></div>
+  <div class="tabs">
+    <button id="tPublic" class="on">Citizen app</button>
+    <button id="tEmerg">Emergency desk</button>
+  </div>
+
+  <!-- CITIZEN VIEW: anyone can report and confirm hazards -->
+  <section id="vPublic">
+    <form id="form">
+      <p id="pin">Tap the map to place the pin.</p>
+      <button type="button" id="loc" class="ghost">Use my location</button>
+      <label for="type">What did you see?</label>
+      <select id="type"></select>
+      <label for="sev">How bad is it?</label>
+      <select id="sev"><option value="1">Low, can be avoided</option><option value="2">High, slows traffic</option><option value="3">Critical, risk of crash</option></select>
+      <label for="note">Details (optional)</label>
+      <textarea id="note" rows="2" placeholder="Example: deep pothole in the left lane"></textarea>
+      <button class="pri" id="send" disabled>Send report</button>
+    </form>
+  </section>
+
+  <!-- EMERGENCY VIEW: only verified or critical hazards, for hospitals and ambulances -->
+  <section id="vEmerg" hidden>
+    <div id="stats"></div>
+    <ul id="desk"></ul>
+    <button class="pri" id="csv">Export data as CSV (organisation plan)</button>
+  </section>
+
+  <footer>Sample data for demo, saved in this browser only. <button id="reset">Reset demo data</button></footer>
+</aside>
+<div id="map"></div>
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+/* ---------- 1. settings and sample data ---------- */
+const KEY = 'ecovolt-demo-v1';
+const CITY = [12.9716, 77.5946];            // map centre: Bengaluru
+const TYPES = {pothole:'Pothole', water:'Waterlogging', accident:'Accident', signal:'Signal not working', tree:'Fallen tree'};
+const SEV = {1:['Low','#e0a100'], 2:['High','#e8590c'], 3:['Critical','#c92a2a']};
+const hrs = n => Date.now() - n * 36e5;
+const SEED = [
+  {id:1, type:'pothole', sev:3, note:'Deep pothole in the left lane, bikes swerving', lat:12.9177, lng:77.6238, time:hrs(2), confirms:5},
+  {id:2, type:'water',   sev:2, note:'Knee-deep water under the underpass',          lat:12.9767, lng:77.5713, time:hrs(1), confirms:4},
+  {id:3, type:'signal',  sev:2, note:'Signal dark at the junction',                  lat:13.0358, lng:77.5970, time:hrs(5), confirms:3},
+  {id:4, type:'pothole', sev:1, note:'Small crater near the bus stop',               lat:12.9352, lng:77.6245, time:hrs(9), confirms:1},
+  {id:5, type:'accident',sev:3, note:'Two-wheeler skid, one lane blocked',           lat:13.0012, lng:77.6960, time:hrs(0.5), confirms:2},
+  {id:6, type:'tree',    sev:2, note:'Branch across the road',                       lat:13.0035, lng:77.5643, time:hrs(3), confirms:3},
+  {id:7, type:'pothole', sev:2, note:'Road edge broken for 20 metres',               lat:12.9308, lng:77.5838, time:hrs(30), confirms:2},
+  {id:8, type:'water',   sev:1, note:'Puddle forming near the service road',         lat:12.8452, lng:77.6602, time:hrs(4), confirms:1}
+];
+const mk = r => Object.assign({fixed:0, dispatched:false, resolved:false}, r);
+
+/* ---------- 2. helpers ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const verified = r => r.confirms >= 3;       // 3 confirmations = verified
+function ago(t){const m = Math.round((Date.now()-t)/6e4); return m<60 ? m+' min ago' : m<1440 ? Math.round(m/60)+' h ago' : Math.round(m/1440)+' d ago';}
+function toast(msg){const t=$('toast'); t.textContent=msg; t.style.display='block'; clearTimeout(toast.t); toast.t=setTimeout(()=>t.style.display='none',3500);}
+function load(){try{return JSON.parse(localStorage.getItem(KEY)) || SEED.map(mk);}catch(e){return SEED.map(mk);}}
+function save(){try{localStorage.setItem(KEY, JSON.stringify(reports));}catch(e){}}
+
+/* ---------- 3. state and map ---------- */
+let reports = load(), mode = 'public', draft = null, draftMarker = null;
+const markers = {};
+const map = L.map('map').setView(CITY, 12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+$('type').innerHTML = Object.entries(TYPES).map(([k,v]) => `<option value="${k}">${v}</option>`).join('');
+
+/* ---------- 4. drawing everything ---------- */
+function visible(){
+  // Citizens see every open report. The emergency desk only sees verified or critical ones.
+  return reports.filter(r => !r.resolved && (mode==='public' || verified(r) || r.sev===3))
+                .sort((a,b) => b.sev - a.sev || b.time - a.time);
+}
+function popup(r){
+  const status = verified(r) ? 'Verified by '+r.confirms+' people' : 'Unverified: '+r.confirms+' of 3 confirmations';
+  const btns = mode==='public'
+    ? `<button onclick="act(${r.id},'confirm')">I see it too</button><button onclick="act(${r.id},'fixed')">It's fixed</button>`
+    : `<button onclick="act(${r.id},'dispatch')">${r.dispatched?'Crew on the way':'Dispatch crew'}</button><button onclick="act(${r.id},'resolve')">Mark resolved</button>`;
+  return `<b>${TYPES[r.type]}</b> (${SEV[r.sev][0]})<br>${esc(r.note) || 'No details'}<br><small>${status}<br>Reported ${ago(r.time)}</small><div class="pb">${btns}</div>`;
+}
+function render(){
+  layer.clearLayers();
+  const list = visible();
+  list.forEach(r => {
+    markers[r.id] = L.circleMarker([r.lat, r.lng], {radius:8+r.sev*2, color:'#fff', weight:2, fillColor:SEV[r.sev][1], fillOpacity:r.dispatched?0.45:0.95})
+      .bindPopup(popup(r)).addTo(layer);
+  });
+  if(mode==='emerg'){
+    $('stats').innerHTML = `<div><b>${list.length}</b>active alerts</div><div><b>${list.filter(r=>r.sev===3).length}</b>critical</div><div><b>${list.filter(r=>r.dispatched).length}</b>crews sent</div>`;
+    $('desk').innerHTML = list.map(r => `<li onclick="focusReport(${r.id})"><i style="background:${SEV[r.sev][1]}"></i><div><b>${TYPES[r.type]}</b> (${SEV[r.sev][0]})<br><small>${esc(r.note)}</small><br><small>${ago(r.time)}${r.dispatched?', crew dispatched':''}</small></div></li>`).join('') || '<li>No active alerts.</li>';
+  }
+}
+function focusReport(id){const m = markers[id]; if(m){map.flyTo(m.getLatLng(), 15); m.openPopup();}}
+
+/* ---------- 5. actions (this is how the data stays fresh) ---------- */
+function act(id, kind){
+  const r = reports.find(x => x.id===id); if(!r) return;
+  if(kind==='confirm'){r.confirms++; r.time = Date.now();}      // each confirmation refreshes the report
+  if(kind==='fixed' && ++r.fixed >= 2) r.resolved = true;       // 2 "fixed" votes close it
+  if(kind==='dispatch') r.dispatched = true;
+  if(kind==='resolve') r.resolved = true;
+  save(); map.closePopup(); render();
+}
+function setMode(m){
+  mode = m; document.body.dataset.mode = m;
+  $('vPublic').hidden = m!=='public'; $('vEmerg').hidden = m!=='emerg';
+  $('tPublic').classList.toggle('on', m==='public'); $('tEmerg').classList.toggle('on', m==='emerg');
+  map.closePopup(); render();
+}
+function setDraft(lat, lng){
+  draft = {lat, lng};
+  if(draftMarker) draftMarker.setLatLng(draft);
+  else draftMarker = L.circleMarker(draft, {radius:11, color:'#1d2430', weight:2, dashArray:'3', fillOpacity:0}).addTo(map);
+  $('pin').textContent = 'Pin placed at '+lat.toFixed(4)+', '+lng.toFixed(4);
+  $('send').disabled = false;
+}
+
+/* ---------- 6. wiring up buttons ---------- */
+$('tPublic').onclick = () => setMode('public');
+$('tEmerg').onclick = () => setMode('emerg');
+map.on('click', e => { if(mode==='public') setDraft(e.latlng.lat, e.latlng.lng); });
+$('loc').onclick = () => {
+  if(!navigator.geolocation) return toast('Location is not available. Tap the map instead.');
+  navigator.geolocation.getCurrentPosition(
+    p => {setDraft(p.coords.latitude, p.coords.longitude); map.setView([p.coords.latitude, p.coords.longitude], 16);},
+    () => toast('Location is blocked. Tap the map to place the pin instead.'));
+};
+$('form').onsubmit = e => {
+  e.preventDefault(); if(!draft) return;
+  reports.push(mk({id:Date.now(), type:$('type').value, sev:+$('sev').value, note:$('note').value.trim(), lat:draft.lat, lng:draft.lng, time:Date.now(), confirms:1}));
+  save(); draft = null;
+  if(draftMarker){map.removeLayer(draftMarker); draftMarker = null;}
+  e.target.reset(); $('send').disabled = true; $('pin').textContent = 'Tap the map to place the pin.';
+  toast('Report sent. It becomes verified after 3 confirmations.'); render();
+};
+$('csv').onclick = () => {
+  const rows = [['type','severity','note','lat','lng','confirmations','reported_at']]
+    .concat(visible().map(r => [TYPES[r.type], SEV[r.sev][0], '"'+r.note.replace(/"/g,'""')+'"', r.lat, r.lng, r.confirms, new Date(r.time).toISOString()]));
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], {type:'text/csv'}));
+  a.download = 'ecovolt-hazards.csv'; a.click();
+};
+$('reset').onclick = () => {reports = SEED.map(mk); save(); render(); toast('Demo data reset.');};
+
+render();
+</script>
+</body>
+</html>
