@@ -42,17 +42,26 @@ button:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px sol
 .pb button{padding:5px 8px;border:1px solid var(--ink);background:#fff;border-radius:5px}
 footer{margin-top:auto;padding:12px 18px;font-size:12px;color:#52606d}
 footer button{border:0;background:none;text-decoration:underline;padding:0;color:inherit}
-#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:6px;display:none;z-index:999;max-width:90%}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:#fff;padding:10px 16px;border-radius:6px;display:none;z-index:1100;max-width:90%}
 .live{background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 1px 6px rgba(0,0,0,.3);font-size:13px;width:210px;font-family:Barlow,system-ui,sans-serif}
 .lt{display:block;font-size:15px;margin-bottom:6px}
 .lr{display:flex;justify-content:space-between;gap:8px;padding:2px 0}
 .live small{display:block;color:#52606d;margin-top:6px}
+#modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+#modal[hidden]{display:none}
+#modal .card{background:#fff;border-radius:10px;padding:20px;max-width:420px;width:100%;max-height:90vh;overflow:auto}
+#modal h2{margin:0}
+#modal input{width:100%;padding:8px;font:inherit;border:1px solid #9aa5b1;border-radius:6px}
+.plans{display:flex;gap:8px;margin:10px 0}
+.plans div{flex:1;border:1px solid #9aa5b1;border-radius:8px;padding:10px}
+.plans p{margin:4px 0;font-size:14px}
+header .ghost{margin-top:8px;font-weight:600}
 @media(max-width:760px){body{flex-direction:column;height:auto;min-height:100vh}#map{order:-1;flex:none;height:45vh}#panel{width:auto}}
 </style>
 </head>
 <body data-mode="public">
 <aside id="panel">
-  <header><h1>EcoVolt</h1><p>Live road hazard alerts for Bengaluru</p></header>
+  <header><h1>EcoVolt</h1><p>Live road hazard alerts for Bengaluru</p><button id="subBtn" class="ghost">Subscribe (for organisations)</button></header>
   <div class="lane"></div>
   <div class="tabs">
     <button id="tPublic" class="on">Citizen app</button>
@@ -79,7 +88,7 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
   <section id="vEmerg" hidden>
     <div id="stats"></div>
     <ul id="desk"></ul>
-    <button class="pri" id="csv">Export data as CSV (organisation plan)</button>
+    <button class="pri" id="csv">Export data as CSV (Pro plan)</button>
   </section>
 
   <!-- ROUTE PLANNER: delivery companies and women travelling alone -->
@@ -96,6 +105,28 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
 <div id="map"></div>
 <div id="toast" role="status"></div>
 
+<!-- SUBSCRIBE POP-UP for organisations (demo: no payment is taken) -->
+<div id="modal" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="mt">
+    <h2 id="mt">Plans for organisations</h2>
+    <div class="plans">
+      <div><b>Free</b><p>Basic hazard alerts on the map</p></div>
+      <div><b>Pro</b><p>Safe-route planner, Emergency desk, CSV data export</p><p id="price"></p></div>
+    </div>
+    <form id="subForm">
+      <label for="org">Organisation name</label>
+      <input id="org" required>
+      <label for="orgType">Type of organisation</label>
+      <select id="orgType"><option>Delivery company</option><option>Hospital or ambulance service</option><option>City corporation</option><option>NGO</option><option>Other</option></select>
+      <label for="email">Work email</label>
+      <input id="email" type="email" required>
+      <button class="pri">Subscribe to Pro</button>
+      <button type="button" class="ghost" id="closeSub" style="width:100%;margin-top:8px">Cancel</button>
+    </form>
+    <small>Demo only. No payment is taken.</small>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 /* ---------- 1. settings and sample data ---------- */
@@ -103,6 +134,9 @@ const KEY = 'ecovolt-demo-v1';
 const CITY = [12.9716, 77.5946];            // map centre: Bengaluru
 const TYPES = {pothole:'Pothole', water:'Waterlogging', accident:'Accident', signal:'Signal not working', tree:'Fallen tree', robbery:'Robbery or theft', dark:'Poorly lit road', harass:'Harassment'};
 const SAFETY = {robbery:1, dark:1, harass:1};   // these types are safety reports, drawn in purple
+const SUBKEY = 'ecovolt-sub-v1';
+const SIGNUP_FORM_URL = '';   // paste a Google Form link here to collect real organisation sign-ups
+const PRO_PRICE = 'Price: to be decided';
 // Route scoring: seconds of penalty added per reported problem near a route, multiplied by severity
 const PROFILES = {rider:{road:90, safe:60}, woman:{road:30, safe:400}};
 const SEV = {1:['Low','#e0a100'], 2:['High','#e8590c'], 3:['Critical','#c92a2a']};
@@ -211,13 +245,14 @@ $('form').onsubmit = e => {
   toast('Report sent. It becomes verified after 3 confirmations.'); render();
 };
 $('csv').onclick = () => {
+  if(!sub) return openSub('Data export is part of the Pro plan.');
   const rows = [['type','severity','note','lat','lng','confirmations','reported_at']]
     .concat(visible().map(r => [TYPES[r.type], SEV[r.sev][0], '"'+r.note.replace(/"/g,'""')+'"', r.lat, r.lng, r.confirms, new Date(r.time).toISOString()]));
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], {type:'text/csv'}));
   a.download = 'ecovolt-hazards.csv'; a.click();
 };
-$('reset').onclick = () => {reports = SEED.map(mk); save(); render(); toast('Demo data reset.');};
+$('reset').onclick = () => {reports = SEED.map(mk); save(); render(); sub = null; try{localStorage.removeItem(SUBKEY);}catch(e){} renderSub(); toast('Demo data reset.');};
 
 /* ---------- 7. live numbers card (shown on the map in every tab) ---------- */
 let lastTrip = null;
@@ -238,6 +273,29 @@ function renderStats(){
     + row('Fixed or resolved', reports.filter(r => r.resolved).length)
     + `<small>Last trip: ${trip}</small><small>*Estimate from the delay weights in PROFILES. These are assumptions, so replace them with your survey data.</small>`;
 }
+
+/* ---------- 9. organisation subscription (demo, no real payment) ---------- */
+let sub = null;
+try{ sub = JSON.parse(localStorage.getItem(SUBKEY)); }catch(e){}
+function renderSub(){
+  $('subBtn').textContent = sub ? 'Pro plan active: ' + sub.org : 'Subscribe (for organisations)';
+  $('price').textContent = PRO_PRICE;
+}
+function openSub(msg){
+  if(SIGNUP_FORM_URL) return window.open(SIGNUP_FORM_URL, '_blank');
+  if(msg) toast(msg);
+  $('modal').hidden = false; $('org').focus();
+}
+$('subBtn').onclick = () => sub ? toast('Your organisation is already on the Pro plan.') : openSub();
+$('closeSub').onclick = () => { $('modal').hidden = true; };
+$('subForm').onsubmit = e => {
+  e.preventDefault();
+  sub = {org:$('org').value.trim(), type:$('orgType').value, email:$('email').value.trim(), time:Date.now()};
+  try{ localStorage.setItem(SUBKEY, JSON.stringify(sub)); }catch(err){}
+  $('modal').hidden = true; e.target.reset(); renderSub();
+  toast('Subscribed to Pro (demo, no payment taken). Data export is now unlocked.');
+};
+renderSub();
 
 /* ---------- 8. route planner ---------- */
 let pts = [];
