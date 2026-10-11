@@ -7,7 +7,6 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
-/* ---------- look and feel (change colours here) ---------- */
 :root{--acc:#f2b705;--ink:#1d2430;--accInk:#1d2430;--bg:#f3f5f7}
 body[data-mode=emerg]{--acc:#1f6fd1;--accInk:#fff}
 body[data-mode=route]{--acc:#23813d;--accInk:#fff}
@@ -56,7 +55,34 @@ footer button{border:0;background:none;text-decoration:underline;padding:0;color
 .plans div{flex:1;border:1px solid #9aa5b1;border-radius:8px;padding:10px}
 .plans p{margin:4px 0;font-size:14px}
 header .ghost{margin-top:8px;font-weight:600}
-@media(max-width:760px){body{flex-direction:column;height:auto;min-height:100vh}#map{order:-1;flex:none;height:45vh}#panel{width:auto}}
+@media(max-width:760px){body{flex-direction:column;height:100vh;overflow:hidden}#map{order:-1;flex:none;height:55vh}#panel{position:absolute;bottom:0;left:0;right:0;width:auto;height:45vh;border-radius:18px 18px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.25);background:var(--bg)}}
+.photo-preview{display:flex;align-items:center;gap:10px;margin-top:8px;background:#fff;border:1px solid #9aa5b1;border-radius:8px;padding:8px}
+.photo-preview img{width:72px;height:72px;object-fit:cover;border-radius:6px;border:1px solid #ccc}
+.photo-preview .meta{flex:1;font-size:13px}
+.photo-preview .meta small{color:#52606d;display:block}
+#photoInput{display:none}
+.camera-btn{display:flex;align-items:center;justify-content:center;gap:6px;background:#f2b705;border:2px solid #1d2430;border-radius:8px;padding:12px;font-weight:600;margin-top:6px;width:100%;font-size:15px}
+.camera-btn:active{background:#e0a100}
+.camera-btn.has-photo{background:#23813d;color:#fff;border-color:#1a5e2d}
+
+.pin{position:relative;width:28px;height:38px;transform:translate(-50%,-100%);cursor:pointer}
+.pin svg{display:block;filter:drop-shadow(0 2px 3px rgba(0,0,0,.4))}
+.pin .pulse{position:absolute;left:50%;top:100%;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;background:rgba(0,0,0,.15);animation:pinpulse 1.8s ease-out infinite}
+@keyframes pinpulse{0%{transform:scale(.6);opacity:.7}100%{transform:scale(2);opacity:0}}
+
+.medot{position:relative;width:18px;height:18px;border-radius:50%;background:#1a73e8;border:3px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.2),0 2px 6px rgba(0,0,0,.3)}
+.medot::after{content:"";position:absolute;inset:-10px;border-radius:50%;border:2px solid #1a73e8;opacity:.5;animation:medot 2s ease-out infinite}
+@keyframes medot{0%{transform:scale(.7);opacity:.6}100%{transform:scale(1.6);opacity:0}}
+
+.leaflet-popup-content-wrapper{border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.25);padding:2px}
+.leaflet-popup-content{margin:10px 12px;font-family:Barlow,system-ui,sans-serif;font-size:13px;line-height:1.45}
+.leaflet-popup-content b{font-size:14px}
+.leaflet-popup-content .pb button{margin-right:4px}
+
+.leaflet-container{cursor:grab}
+.leaflet-container:active{cursor:grabbing}
+.leaflet-control-zoom a{width:34px;height:34px;line-height:34px;font-size:20px;border-radius:6px!important;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.leaflet-control-zoom{border:0!important;margin-top:12px!important;margin-left:12px!important}
 </style>
 </head>
 <body data-mode="public">
@@ -69,7 +95,6 @@ header .ghost{margin-top:8px;font-weight:600}
     <button id="tRoute">Route planner</button>
   </div>
 
-  <!-- CITIZEN VIEW: anyone can report and confirm hazards -->
   <section id="vPublic">
     <form id="form">
       <p id="pin">Tap the map to place the pin.</p>
@@ -80,18 +105,25 @@ header .ghost{margin-top:8px;font-weight:600}
       <select id="sev"><option value="1">Low, can be avoided</option><option value="2">High, slows traffic</option><option value="3">Critical, risk of crash</option></select>
       <label for="note">Details (optional)</label>
       <textarea id="note" rows="2" placeholder="Example: deep pothole in the left lane"></textarea>
+
+      <label>Photo evidence</label>
+      <button type="button" id="cameraBtn" class="camera-btn">📷 Capture or upload photo</button>
+      <input type="file" id="photoInput" accept="image/*" capture="environment" style="display:none">
+      <div id="photoDrop" style="margin-top:6px;border:2px dashed #9aa5b1;border-radius:8px;padding:10px;text-align:center;font-size:13px;color:#52606d;display:none">
+        Or drag &amp; drop an image here
+      </div>
+      <div id="photoPreviewContainer" style="margin-top:8px;"></div>
+
       <button class="pri" id="send" disabled>Send report</button>
     </form>
   </section>
 
-  <!-- EMERGENCY VIEW: only verified or critical hazards, for hospitals and ambulances -->
   <section id="vEmerg" hidden>
     <div id="stats"></div>
     <ul id="desk"></ul>
     <button class="pri" id="csv">Export data as CSV (Pro plan)</button>
   </section>
 
-  <!-- ROUTE PLANNER: delivery companies and women travelling alone -->
   <section id="vRoute" hidden>
     <label for="who">Who is travelling?</label>
     <select id="who"><option value="rider">Delivery rider (fast and safe)</option><option value="woman">Woman travelling alone (avoid unsafe areas)</option></select>
@@ -105,7 +137,6 @@ header .ghost{margin-top:8px;font-weight:600}
 <div id="map"></div>
 <div id="toast" role="status"></div>
 
-<!-- SUBSCRIBE POP-UP for organisations (demo: no payment is taken) -->
 <div id="modal" hidden>
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="mt">
     <h2 id="mt">Plans for organisations</h2>
@@ -131,13 +162,12 @@ header .ghost{margin-top:8px;font-weight:600}
 <script>
 /* ---------- 1. settings and sample data ---------- */
 const KEY = 'ecovolt-demo-v1';
-const CITY = [12.9716, 77.5946];            // map centre: Bengaluru
+const CITY = [12.9716, 77.5946];
 const TYPES = {pothole:'Pothole', water:'Waterlogging', accident:'Accident', signal:'Signal not working', tree:'Fallen tree', robbery:'Robbery or theft', dark:'Poorly lit road', harass:'Harassment'};
-const SAFETY = {robbery:1, dark:1, harass:1};   // these types are safety reports, drawn in purple
+const SAFETY = {robbery:1, dark:1, harass:1};
 const SUBKEY = 'ecovolt-sub-v1';
-const SIGNUP_FORM_URL = '';   // paste a Google Form link here to collect real organisation sign-ups
+const SIGNUP_FORM_URL = '';
 const PRO_PRICE = 'Price: to be decided';
-// Route scoring: seconds of penalty added per reported problem near a route, multiplied by severity
 const PROFILES = {rider:{road:90, safe:60}, woman:{road:30, safe:400}};
 const SEV = {1:['Low','#e0a100'], 2:['High','#e8590c'], 3:['Critical','#c92a2a']};
 const hrs = n => Date.now() - n * 36e5;
@@ -154,29 +184,48 @@ const SEED = [
   {id:10, type:'dark',    sev:2, note:'Street lights out along the whole stretch',    lat:12.9560, lng:77.6030, time:hrs(12), confirms:3},
   {id:11, type:'harass',  sev:3, note:'Women reported being followed near the bus stop', lat:12.9930, lng:77.6200, time:hrs(8), confirms:3}
 ];
-const mk = r => Object.assign({fixed:0, dispatched:false, resolved:false}, r);
+const mk = r => Object.assign({fixed:0, dispatched:false, resolved:false, photo:null}, r);
 
 /* ---------- 2. helpers ---------- */
 const $ = id => document.getElementById(id);
 const esc = s => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const verified = r => r.confirms >= 3;       // 3 confirmations = verified
+const verified = r => r.confirms >= 3;
 function ago(t){const m = Math.round((Date.now()-t)/6e4); return m<60 ? m+' min ago' : m<1440 ? Math.round(m/60)+' h ago' : Math.round(m/1440)+' d ago';}
 function toast(msg){const t=$('toast'); t.textContent=msg; t.style.display='block'; clearTimeout(toast.t); toast.t=setTimeout(()=>t.style.display='none',3500);}
-function load(){try{return JSON.parse(localStorage.getItem(KEY)) || SEED.map(mk);}catch(e){return SEED.map(mk);}}
+function load(){try{const stored = JSON.parse(localStorage.getItem(KEY)); if(stored && stored.length) return stored.map(mk);}catch(e){} return SEED.map(mk);}
 function save(){try{localStorage.setItem(KEY, JSON.stringify(reports));}catch(e){}}
 
 /* ---------- 3. state and map ---------- */
 let reports = load(), mode = 'public', draft = null, draftMarker = null;
+let currentPhotoDataUrl = null;
 const markers = {};
-const map = L.map('map').setView(CITY, 12);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:19, attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+
+const map = L.map('map', {
+  zoomControl: true,
+  dragging: true,
+  touchZoom: true,
+  scrollWheelZoom: true,
+  doubleClickZoom: true,
+  tap: false,
+  tapTolerance: 15,
+  inertia: true,
+  worldCopyJump: true,
+  zoomSnap: 0.5,
+  zoomDelta: 0.5,
+  preferCanvas: true
+}).setView(CITY, 12);
+
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+
 const layer = L.layerGroup().addTo(map);
 const opt = k => `<option value="${k}">${TYPES[k]}</option>`;
 $('type').innerHTML = '<optgroup label="Road hazards">' + Object.keys(TYPES).filter(k => !SAFETY[k]).map(opt).join('') + '</optgroup><optgroup label="Safety concerns">' + Object.keys(SAFETY).map(opt).join('') + '</optgroup>';
 
 /* ---------- 4. drawing everything ---------- */
 function visible(){
-  // Citizens see every open report. The emergency desk only sees verified or critical ones.
   return reports.filter(r => !r.resolved && (mode!=='emerg' || verified(r) || r.sev===3))
                 .sort((a,b) => b.sev - a.sev || b.time - a.time);
 }
@@ -185,14 +234,34 @@ function popup(r){
   const btns = mode!=='emerg'
     ? `<button onclick="act(${r.id},'confirm')">I see it too</button><button onclick="act(${r.id},'fixed')">It's fixed</button>`
     : `<button onclick="act(${r.id},'dispatch')">${r.dispatched?'Crew on the way':'Dispatch crew'}</button><button onclick="act(${r.id},'resolve')">Mark resolved</button>`;
-  return `<b>${TYPES[r.type]}</b> (${SEV[r.sev][0]})<br>${esc(r.note) || 'No details'}<br><small>${status}<br>Reported ${ago(r.time)}</small><div class="pb">${btns}</div>`;
+  const photoHtml = r.photo ? `<img src="${r.photo}" style="max-width:100%;max-height:120px;border-radius:6px;margin:6px 0;border:1px solid #ccc;display:block;" alt="hazard photo">` : '';
+  return `<b>${TYPES[r.type]}</b> (${SEV[r.sev][0]})<br>${esc(r.note) || 'No details'}${photoHtml}<br><small>${status}<br>Reported ${ago(r.time)}</small><div class="pb">${btns}</div>`;
 }
+
+const pinCache = {};
+function pinIcon(color, dispatched){
+  const key = color + '|' + (dispatched ? 1 : 0);
+  if(pinCache[key]) return pinCache[key];
+  const opacity = dispatched ? 0.45 : 1;
+  const html = `<div class="pin">
+    <div class="pulse"></div>
+    <svg width="28" height="38" viewBox="0 0 28 38" style="opacity:${opacity}">
+      <path d="M14 0C6.3 0 0 6.3 0 14c0 10 14 24 14 24s14-14 14-24C28 6.3 21.7 0 14 0z" fill="${color}" stroke="#fff" stroke-width="2"/>
+      <circle cx="14" cy="14" r="5" fill="#fff"/>
+    </svg>
+  </div>`;
+  const icon = L.divIcon({html, className:'', iconSize:[28,38], iconAnchor:[14,38], popupAnchor:[0,-34]});
+  pinCache[key] = icon;
+  return icon;
+}
+
 function render(){
   layer.clearLayers();
   const list = visible();
   renderStats();
   list.forEach(r => {
-    markers[r.id] = L.circleMarker([r.lat, r.lng], {radius:8+r.sev*2, color:'#fff', weight:2, fillColor:SAFETY[r.type]?'#7b2cbf':SEV[r.sev][1], fillOpacity:r.dispatched?0.45:0.95})
+    const color = SAFETY[r.type] ? '#7b2cbf' : SEV[r.sev][1];
+    markers[r.id] = L.marker([r.lat, r.lng], {icon: pinIcon(color, r.dispatched)})
       .bindPopup(popup(r)).addTo(layer);
   });
   if(mode==='emerg'){
@@ -202,11 +271,11 @@ function render(){
 }
 function focusReport(id){const m = markers[id]; if(m){map.flyTo(m.getLatLng(), 15); m.openPopup();}}
 
-/* ---------- 5. actions (this is how the data stays fresh) ---------- */
+/* ---------- 5. actions ---------- */
 function act(id, kind){
   const r = reports.find(x => x.id===id); if(!r) return;
-  if(kind==='confirm'){r.confirms++; r.time = Date.now();}      // each confirmation refreshes the report
-  if(kind==='fixed' && ++r.fixed >= 2) r.resolved = true;       // 2 "fixed" votes close it
+  if(kind==='confirm'){r.confirms++; r.time = Date.now();}
+  if(kind==='fixed' && ++r.fixed >= 2) r.resolved = true;
   if(kind==='dispatch') r.dispatched = true;
   if(kind==='resolve') r.resolved = true;
   save(); map.closePopup(); render();
@@ -225,11 +294,73 @@ function setDraft(lat, lng){
   $('send').disabled = false;
 }
 
-/* ---------- 6. wiring up buttons ---------- */
+/* ---------- 6. photo capture ---------- */
+function handlePhotoFile(file) {
+  if (!file || !file.type.startsWith('image/')) { toast('Please select an image file.'); return; }
+  if (file.size > 2 * 1024 * 1024) { toast('Image too large (max 2MB).'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => { currentPhotoDataUrl = e.target.result; updatePhotoPreview(); };
+  reader.readAsDataURL(file);
+}
+function updatePhotoPreview() {
+  const container = $('photoPreviewContainer');
+  if (currentPhotoDataUrl) {
+    container.innerHTML = `<div class="photo-preview"><img src="${currentPhotoDataUrl}" alt="preview"><div class="meta"><b>Photo attached</b><small>Will be included with your report.</small><button type="button" class="ghost" style="margin-top:6px;padding:2px 10px;font-size:12px;" onclick="clearPhoto()">Remove</button></div></div>`;
+  } else { container.innerHTML = ''; }
+  const cameraBtn = $('cameraBtn');
+  cameraBtn.classList.toggle('has-photo', !!currentPhotoDataUrl);
+  cameraBtn.textContent = currentPhotoDataUrl ? '✓ Photo attached (tap to change)' : '📷 Capture or upload photo';
+}
+window.clearPhoto = function() {
+  currentPhotoDataUrl = null;
+  $('photoInput').value = '';
+  updatePhotoPreview();
+};
+
+const cameraBtn = $('cameraBtn');
+const photoInput = $('photoInput');
+const photoDrop = $('photoDrop');
+
+cameraBtn.addEventListener('click', function(e){
+  e.preventDefault();
+  photoInput.value = '';
+  photoInput.click();
+});
+
+photoInput.addEventListener('change', function(e){
+  const file = e.target.files && e.target.files[0];
+  if(file) handlePhotoFile(file);
+});
+
+if(!('ontouchstart' in window)){
+  photoDrop.style.display = 'block';
+  photoDrop.addEventListener('dragover', e => { e.preventDefault(); photoDrop.style.borderColor = '#f2b705'; });
+  photoDrop.addEventListener('dragleave', () => { photoDrop.style.borderColor = '#9aa5b1'; });
+  photoDrop.addEventListener('drop', e => {
+    e.preventDefault();
+    photoDrop.style.borderColor = '#9aa5b1';
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if(file) handlePhotoFile(file);
+  });
+}
+
+/* ---------- 7. wiring up buttons ---------- */
 $('tPublic').onclick = () => setMode('public');
 $('tEmerg').onclick = () => setMode('emerg');
 $('tRoute').onclick = () => setMode('route');
-map.on('click', e => { if(mode==='public') setDraft(e.latlng.lat, e.latlng.lng); if(mode==='route') routeClick(e.latlng); });
+
+let downPt = null;
+map.on('mousedown touchstart', e => { downPt = e.latlng || (e.touches && map.mouseEventToLatLng(e.touches[0])) || null; });
+map.on('click', e => {
+  if(downPt){
+    const d = map.distance(downPt, e.latlng);
+    if(d > 25) { downPt = null; return; }
+  }
+  downPt = null;
+  if(mode==='public') setDraft(e.latlng.lat, e.latlng.lng);
+  if(mode==='route') routeClick(e.latlng);
+});
+
 $('loc').onclick = () => {
   if(!navigator.geolocation) return toast('Location is not available. Tap the map instead.');
   navigator.geolocation.getCurrentPosition(
@@ -238,10 +369,24 @@ $('loc').onclick = () => {
 };
 $('form').onsubmit = e => {
   e.preventDefault(); if(!draft) return;
-  reports.push(mk({id:Date.now(), type:$('type').value, sev:+$('sev').value, note:$('note').value.trim(), lat:draft.lat, lng:draft.lng, time:Date.now(), confirms:1}));
-  save(); draft = null;
-  if(draftMarker){map.removeLayer(draftMarker); draftMarker = null;}
-  e.target.reset(); $('send').disabled = true; $('pin').textContent = 'Tap the map to place the pin.';
+  reports.push(mk({
+    id: Date.now(),
+    type: $('type').value,
+    sev: +$('sev').value,
+    note: $('note').value.trim(),
+    lat: draft.lat,
+    lng: draft.lng,
+    time: Date.now(),
+    confirms: 1,
+    photo: currentPhotoDataUrl || null
+  }));
+  save();
+  draft = null;
+  if(draftMarker){ map.removeLayer(draftMarker); draftMarker = null; }
+  e.target.reset();
+  clearPhoto();
+  $('send').disabled = true;
+  $('pin').textContent = 'Tap the map to place the pin.';
   toast('Report sent. It becomes verified after 3 confirmations.'); render();
 };
 $('csv').onclick = () => {
@@ -252,9 +397,9 @@ $('csv').onclick = () => {
   a.href = URL.createObjectURL(new Blob([rows.map(r => r.join(',')).join('\n')], {type:'text/csv'}));
   a.download = 'ecovolt-hazards.csv'; a.click();
 };
-$('reset').onclick = () => {reports = SEED.map(mk); save(); render(); sub = null; try{localStorage.removeItem(SUBKEY);}catch(e){} renderSub(); toast('Demo data reset.');};
+$('reset').onclick = () => { reports = SEED.map(mk); save(); render(); sub = null; try{localStorage.removeItem(SUBKEY);}catch(e){} renderSub(); clearPhoto(); toast('Demo data reset.'); };
 
-/* ---------- 7. live numbers card (shown on the map in every tab) ---------- */
+/* ---------- 8. live numbers card ---------- */
 let lastTrip = null;
 const info = L.control({position:'topright'});
 info.onAdd = () => { const d = L.DomUtil.create('div', 'live'); d.id = 'live'; L.DomEvent.disableClickPropagation(d); return d; };
@@ -274,7 +419,7 @@ function renderStats(){
     + `<small>Last trip: ${trip}</small><small>*Estimate from the delay weights in PROFILES. These are assumptions, so replace them with your survey data.</small>`;
 }
 
-/* ---------- 9. organisation subscription (demo, no real payment) ---------- */
+/* ---------- 9. subscription ---------- */
 let sub = null;
 try{ sub = JSON.parse(localStorage.getItem(SUBKEY)); }catch(e){}
 function renderSub(){
@@ -297,7 +442,7 @@ $('subForm').onsubmit = e => {
 };
 renderSub();
 
-/* ---------- 8. route planner ---------- */
+/* ---------- 10. route planner ---------- */
 let pts = [];
 const routeLayer = L.layerGroup().addTo(map);
 function routeClick(ll){
@@ -312,14 +457,12 @@ async function findRoute(){
   const [a, b] = pts;
   $('routeHint').textContent = 'Finding routes...';
   try{
-    // free public routing service (OSRM demo server), fine for a prototype
     const url = `https://router.project-osrm.org/route/v1/driving/${a.lng},${a.lat};${b.lng},${b.lat}?overview=full&geometries=geojson&alternatives=true`;
     const d = await (await fetch(url)).json();
     if(!d.routes || !d.routes.length) throw new Error('no route');
     const W = PROFILES[$('who').value];
     const opts = d.routes.map(r => {
       const line = r.geometry.coordinates.map(c => [c[1], c[0]]);
-      // a report counts if it is within about 100 m of the route
       const hits = reports.filter(h => !h.resolved && line.some(p => map.distance(p, [h.lat, h.lng]) < 100));
       const penalty = hits.reduce((sum, h) => sum + h.sev * (SAFETY[h.type] ? W.safe : W.road), 0);
       return {line, min:r.duration/60, km:r.distance/1000, hits, score:r.duration + penalty};
@@ -344,13 +487,17 @@ async function findRoute(){
 }
 $('who').onchange = () => { if(pts.length === 2) findRoute(); };
 
-/* ---------- 10. find my location and search any place ---------- */
+/* ---------- 11. find my location and search ---------- */
 let meMarker = null;
+let meAcc = null;
 map.on('locationfound', e => {
   if(meMarker) map.removeLayer(meMarker);
-  meMarker = L.circleMarker(e.latlng, {radius:8, color:'#fff', weight:3, fillColor:'#1a73e8', fillOpacity:1, bubblingMouseEvents:false}).bindTooltip('You are here').addTo(map);
+  const dot = L.divIcon({html:'<div class="medot"></div>', className:'', iconSize:[18,18], iconAnchor:[9,9]});
+  meMarker = L.marker(e.latlng, {icon: dot, interactive:false}).addTo(map);
+  if(meAcc) map.removeLayer(meAcc);
+  meAcc = L.circle(e.latlng, {radius: e.accuracy, color:'#1a73e8', weight:1, fillColor:'#1a73e8', fillOpacity:0.1}).addTo(map);
 });
-map.on('locationerror', () => toast('Could not get your location. Allow location access in your browser (lock icon next to the web address), or search for a place.'));
+map.on('locationerror', () => toast('Could not get your location. Allow location access or search for a place.'));
 const locate = () => map.locate({setView:true, maxZoom:16, enableHighAccuracy:true});
 const finder = L.control({position:'topleft'});
 finder.onAdd = () => {
@@ -370,7 +517,7 @@ $('find').onsubmit = async e => {
     map.flyTo([+res[0].lat, +res[0].lon], 15);
   }catch(err){ toast('Search failed. Check your internet and try again.'); }
 };
-locate();   // ask for the visitor's location as soon as the page opens
+/* Removed auto-locate on load — it was hijacking the map */
 
 render();
 </script>
